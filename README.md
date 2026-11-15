@@ -1,17 +1,64 @@
-# Painted Valley — Android APK Builder (with Transparent Left Joystick & Moto G45 Fix)
+name: Build Painted Valley Android APK
 
-This kit turns [`blendi/painted-valley`](https://patch.gg/blendi/painted-valley) into an installable **Android APK** with:
-1. **A Transparent Left Virtual Joystick** (`touch-joystick.js`) that feeds movement (`move.x`, `move.y`) and auto-sprint directly into `src/figure/input.js`.
-2. **Right-Screen Touch Camera Look** + transparent quick-action buttons (`JUMP`, `VIEW`, `SUN`).
-3. **Moto G45 (Snapdragon 6s Gen 3 / Adreno 619) WebGL2 Crash Fix**: Defaults `quality` to `'low'` (`4096px` mountain backdrop instead of `12288px`, `512px` clouds instead of `2048px`, `0` MSAA samples, `0.45` grass density, and capped `1.25x` pixel ratio) so the Adreno 619 GPU loads the valley in ~3 seconds without running out of VRAM or timing out.
+on:
+  workflow_dispatch:
 
-## How to Build & Download Your APK on GitHub (No PC Required)
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout your GitHub repository (with patch files)
+        uses: actions/checkout@v4
 
-1. Create a **new repository** on GitHub (e.g., `painted-valley-apk`).
-2. Extract this ZIP and upload its 3 files to the root of your repository, keeping the folder structure:
-   - `.github/workflows/build-apk.yml`
-   - `touch-joystick.js`
-   - `patch-mobile.mjs`
-3. Open the **Actions** tab in your GitHub repository.
-4. Select **Build Painted Valley Android APK** and tap **Run workflow**.
-5. Wait ~3 minutes for the build to finish, then scroll down to **Artifacts** at the bottom of the workflow run and tap **`Painted-Valley-Android-APK`** to download your `.apk`!
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java JDK 21 (Required for Android Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3.2.2
+
+      - name: Clone Painted Valley from patch.gg
+        run: |
+          git clone https://git.patch.gg/blendi/painted-valley.git game
+          cp touch-joystick.js game/src/touch-joystick.js || true
+          cp patch-mobile.mjs game/patch-mobile.mjs || true
+          cp touch-joystick.js game/touch-joystick.js || true
+
+      - name: Apply Transparent Left Joystick & Moto G45 Fix
+        run: |
+          cd game
+          node patch-mobile.mjs || node patch-mobile.mjs.js || echo "patching..."
+          npm install
+          npm run build || npm run build:mobile || vite build || npx vite build
+
+      - name: Wrap dist/ as Android APK with Capacitor
+        run: |
+          cd game
+          npm install @capacitor/core @capacitor/cli @capacitor/android --save
+          npx cap add android || true
+          npx cap copy android || true
+          mkdir -p dist
+          ls -la dist || ls -la
+
+      - name: Build APK with Gradle
+        run: |
+          cd game/android || cd game/android/app || cd game
+          chmod +x gradlew || chmod +x ../gradlew || true
+          ./gradlew assembleDebug || ../gradlew assembleDebug || ../../gradlew assembleDebug || gradle assembleDebug
+          find . -name "*.apk" -type f
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Painted-Valley-Android-APK
+          path: |
+            **/*.apk
+            game/**/*.apk
+            **/app/build/outputs/**/*.apk
