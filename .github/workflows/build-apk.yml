@@ -1,49 +1,111 @@
+
 name: Build Painted Valley Android APK
+
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
+
+permissions:
+  contents: read
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout builder repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - uses: actions/setup-java@v4
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '21'
-      - name: Setup Android SDK Manually
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
         run: |
-          sudo apt-get update
-          sudo apt-get install -y wget unzip
-          mkdir -p $ANDROID_HOME/cmdline-tools
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmd.zip
-          unzip -q cmd.zip -d $ANDROID_HOME/cmdline-tools
-          mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
-          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+
       - name: Clone Painted Valley
         run: |
           git clone https://git.patch.gg/blendi/painted-valley.git game
-          cp -v touch-joystick.js game/ || true
-          cp -v patch-mobile.mjs game/ || true
-      - name: Build
+
+          test -f touch-joystick.js
+          test -f patch-mobile.mjs
+
+          cp touch-joystick.js game/
+          cp patch-mobile.mjs game/
+
+      - name: Apply mobile patches
+        working-directory: game
         run: |
-          cd game
-          node patch-mobile.mjs || true
-          npm install
-          npm run build || npx vite build
-          npx cap init "Painted Valley" com.paintedvalley.app --web-dir=dist || npx cap init "Painted Valley" com.paintedvalley.app --web-dir=www || true
-          npx cap add android || true
-          npx cap copy || npx cap sync || true
-          cd android
+          node patch-mobile.mjs
+
+          grep -q "TouchControls" src/figure/input.js
+          grep -q "this.touch.consume(s)" src/figure/input.js
+          grep -q "pv-touch-start" src/valley/main.js
+
+          echo "Mobile patches verified."
+
+      - name: Install project dependencies
+        working-directory: game
+        run: |
+          npm install --no-audit --no-fund
+
+      - name: Install Capacitor
+        working-directory: game
+        run: |
+          npm install @capacitor/core@6.2.1 \
+                      @capacitor/android@6.2.1
+
+          npm install --save-dev @capacitor/cli@6.2.1
+
+      - name: Configure Capacitor
+        working-directory: game
+        run: |
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.paintedvalley.app",
+            "appName": "Painted Valley",
+            "webDir": "dist"
+          }
+          EOF
+
+      - name: Build web game
+        working-directory: game
+        run: |
+          npm run build
+          test -f dist/index.html
+
+      - name: Create Android project
+        working-directory: game
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Build Android APK
+        working-directory: game/android
+        run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
-      - uses: actions/upload-artifact@v4
+          ./gradlew --no-daemon assembleDebug
+
+          test -f app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
           name: Painted-Valley-Android-APK
-          path: "**/*.apk"
+          path: game/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
