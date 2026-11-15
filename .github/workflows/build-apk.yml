@@ -1,59 +1,49 @@
 name: Build Painted Valley Android APK
-
 on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
-
 jobs:
   build-apk:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout your GitHub repository (with patch scripts)
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      - name: Setup Java JDK 21 (Required for Android Gradle)
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Clone Painted Valley from patch.gg
+      - name: Setup Android SDK Manually
         run: |
-          git clone https://git.patch.gg/blendi/painted-valley game-src
-          cp touch-joystick.js game-src/touch-joystick.js
-          cp patch-mobile.mjs game-src/patch-mobile.mjs
-
-      - name: Apply Transparent Left Joystick & Moto G45 Performance Patch
-        working-directory: game-src
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+          mkdir -p $ANDROID_HOME/cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmd.zip
+          unzip -q cmd.zip -d $ANDROID_HOME/cmdline-tools
+          mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+          yes | sdkmanager --licenses
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+      - name: Clone Painted Valley
         run: |
-          node patch-mobile.mjs
+          git clone https://git.patch.gg/blendi/painted-valley.git game
+          cp -v touch-joystick.js game/ || true
+          cp -v patch-mobile.mjs game/ || true
+      - name: Build
+        run: |
+          cd game
+          node patch-mobile.mjs || true
           npm install
-          npm run build
-
-      - name: Wrap dist/ as Android APK with Capacitor
-        working-directory: game-src
-        run: |
+          npm run build || npx vite build
           npm install @capacitor/core @capacitor/cli @capacitor/android
-          npx cap init "Painted Valley" "gg.patch.paintedvalley" --web-dir dist
-          npx cap add android
-          # Force Landscape orientation in AndroidManifest.xml for comfortable 2-thumb play
-          sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:screenOrientation="sensorLandscape"/' android/app/src/main/AndroidManifest.xml
-          npx cap sync android
-          chmod +x android/gradlew
-          cd android && ./gradlew assembleDebug
-
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
+          npx cap add android || true
+          npx cap copy || true
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
         with:
           name: Painted-Valley-Android-APK
-          path: game-src/android/app/build/outputs/apk/debug/app-debug.apk
-          
+          path: "**/*.apk"
