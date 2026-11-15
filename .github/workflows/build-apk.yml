@@ -1,0 +1,59 @@
+name: Build Painted Valley Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout your GitHub repository (with patch scripts)
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Java JDK 21 (Required for Android Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Clone Painted Valley from patch.gg
+        run: |
+          git clone https://git.patch.gg/blendi/painted-valley game-src
+          cp touch-joystick.js game-src/touch-joystick.js
+          cp patch-mobile.mjs game-src/patch-mobile.mjs
+
+      - name: Apply Transparent Left Joystick & Moto G45 Performance Patch
+        working-directory: game-src
+        run: |
+          node patch-mobile.mjs
+          npm install
+          npm run build
+
+      - name: Wrap dist/ as Android APK with Capacitor
+        working-directory: game-src
+        run: |
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npx cap init "Painted Valley" "gg.patch.paintedvalley" --web-dir dist
+          npx cap add android
+          # Force Landscape orientation in AndroidManifest.xml for comfortable 2-thumb play
+          sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:screenOrientation="sensorLandscape"/' android/app/src/main/AndroidManifest.xml
+          npx cap sync android
+          chmod +x android/gradlew
+          cd android && ./gradlew assembleDebug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Painted-Valley-Android-APK
+          path: game-src/android/app/build/outputs/apk/debug/app-debug.apk
+          
